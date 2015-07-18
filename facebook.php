@@ -32,24 +32,36 @@ if (!isset($_GET['id']) || !isset($_GET['count'])) exit('param');
 $page_id = urlencode($_GET['id']);
 $count = urlencode($_GET['count']);
 
-//TODO forward ETag/If-None-Match
-
 // test content
 //$text = '{…}';
 
+$etag = '';
 if (!isset($text)) {
 	$curl = curl_init("https://graph.facebook.com/v2.4/{$page_id}?fields=name,link,feed.limit({$count})%7Bstory,message,created_time,updated_time,from,link,name,caption,description,attachments%7D&access_token={$access_token}");
 	curl_setopt($curl, CURLOPT_HEADER, True);
 	curl_setopt($curl, CURLOPT_FAILONERROR, True);
 	curl_setopt($curl, CURLOPT_RETURNTRANSFER, True);
+	if (isset($_SERVER['HTTP_IF_NONE_MATCH'])) {
+		curl_setopt($curl, CURLOPT_HTTPHEADER, array('If-None-Match: ' . $_SERVER['HTTP_IF_NONE_MATCH']));
+	}
 	$response = curl_exec($curl);
+	$http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
 	if (!$response) {
-		exit(curl_getinfo($curl, CURLINFO_HTTP_CODE) . '  ' . curl_error($curl));
+		exit($http_code . '  ' . curl_error($curl));
 	}
 	$header_size = curl_getinfo($curl, CURLINFO_HEADER_SIZE);
 	$header = substr($response, 0, $header_size);
 	$text = substr( $response, $header_size );
 	curl_close($curl);
+	if (preg_match('/^ETag: (.*)$/m', $header, $matches)) {
+		$etag = $matches[1];
+	}
+	if ($http_code == 304) {
+		header('HTTP/1.1 304 Not Modified');
+		header('Content-type: application/atom+xml');
+		if ($etag != NULL) header('ETag: ' . $etag);
+		exit();
+	}
 }
 
 $data = json_decode($text, True);
@@ -96,7 +108,7 @@ function formatAttachments($attachments) {
 mb_internal_encoding('UTF-8');
 
 header('Content-type: application/atom+xml');
-header('ETag: ');
+if ($etag != NULL) header('ETag: ' . $etag);
 
 print('<?xml version="1.0" encoding="utf-8"?>' . "\n");
 print('<feed xmlns="http://www.w3.org/2005/Atom">' . "\n");
